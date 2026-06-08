@@ -2,6 +2,19 @@
 # leaspec init — 在目标项目中初始化 leaspec/ 目录结构
 set -euo pipefail
 
+# Require Bash 4+ (macOS default is 3.2)
+if [ -z "${BASH_VERSION:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  echo "错误: leaspec 需要 Bash 4+，当前版本: ${BASH_VERSION:-unknown}" >&2
+  echo "请使用 Homebrew 安装: brew install bash" >&2
+  exit 1
+fi
+
+# Detect gum for rich terminal UI (proper UTF-8 handling)
+_HAS_GUM="false"
+if command -v gum &>/dev/null && [ -t 0 ]; then
+  _HAS_GUM="true"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/helpers.sh" 2>/dev/null || true
 
@@ -164,6 +177,9 @@ _validate_args() {
   if [ -z "${PROJECT_ROOT:-}" ]; then
     echo "Error: <project-root> is required"
     errs=$((errs + 1))
+  elif [ ! -d "$PROJECT_ROOT" ]; then
+    echo "Error: Project root '$PROJECT_ROOT' does not exist or is not a directory"
+    errs=$((errs + 1))
   fi
 
   # Validate --track-leaspec
@@ -218,74 +234,151 @@ _is_tty() {
   [ -t 0 ]
 }
 
+# Gum-aware output helpers — ensure consistent rendering in both modes
+_say() {
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style "$1" >&2
+  else
+    echo "$1" >&2
+  fi
+}
+_say_bold() {
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style --bold "$1" >&2
+  else
+    echo -e "\033[1m$1\033[0m" >&2
+  fi
+}
+_say_green() {
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style --foreground 212 --bold "▸ $1" >&2
+  else
+    green "▸ $1" >&2
+  fi
+}
+_say_yellow() {
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style --foreground 214 "$1" >&2
+  else
+    yellow "$1" >&2
+  fi
+}
+_say_heading() {
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style --bold --border double --padding "0 2" --margin "1 0" --align center "$1" >&2
+  else
+    echo "" >&2
+    echo "============================================" >&2
+    echo "        $1" >&2
+    echo "============================================" >&2
+  fi
+}
+
 # T014: Prompt for text input with default value
-# NOTE: prompt output goes to stderr so it's visible even inside $()
+# Uses gum input when available (proper UTF-8), falls back to read
+# Label is rendered separately via gum style to keep Chinese chars out of gum's line-editor
 _prompt() {
   local label="$1"
   local default="$2"
-  local input
 
-  printf "%s [%s]: " "$label" "$default" >&2
-  read -r input
-  echo "${input:-$default}"
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style --bold "$label" >&2
+    gum input --value "$default" --prompt "> "
+  else
+    local input
+    printf "%s [%s]: " "$label" "$default" >&2
+    IFS= read -r input
+    echo "${input:-$default}"
+  fi
 }
 
 # yes/no prompt — returns "true" or "false"
+# Uses gum confirm when available, falls back to read
 _prompt_yn() {
   local label="$1"
   local default="$2"
 
-  case "$default" in
-    y|Y|yes|YES|true) printf "%s [Y/n]: " "$label" >&2 ;;
-    *)                printf "%s [y/N]: " "$label" >&2 ;;
-  esac
-
-  read -r answer
-  case "${answer:-$default}" in
-    y|Y|yes|YES|true)  echo "true"  ;;
-    n|N|no|NO|false)   echo "false" ;;
-    *)                 echo "false" ;;
-  esac
+  if [ "$_HAS_GUM" = "true" ]; then
+    local def_flag="--default=false"
+    case "$default" in
+      y|Y|yes|YES|true) def_flag="--default=true" ;;
+    esac
+    if gum confirm ${def_flag} --affirmative "Yes" --negative "No" "${label}"; then
+      echo "true"
+    else
+      echo "false"
+    fi
+  else
+    case "$default" in
+      y|Y|yes|YES|true) printf "%s [Y/n]: " "$label" >&2 ;;
+      *)                printf "%s [y/N]: " "$label" >&2 ;;
+    esac
+    IFS= read -r answer
+    case "${answer:-$default}" in
+      y|Y|yes|YES|true)  echo "true"  ;;
+      n|N|no|NO|false)   echo "false" ;;
+      *)                 echo "false" ;;
+    esac
+  fi
 }
 
 # T014b: Numbered option selection — returns selected option TEXT
 # Automatically appends a "自定义输入..." option as the last choice.
-# When user selects it, prompts for free-text input and returns that.
-# Usage: _prompt_choice "标题" "选项1" "选项2" "选项3"
-# NOTE: all user-facing output goes to stderr so it's visible even inside $()
+# Uses gum choose + gum input when available, falls back to numbered read
 _prompt_choice() {
   local prompt="$1"
   shift
   local options=("$@")
 
-  echo "" >&2
-  echo -e "\033[1m${prompt}\033[0m" >&2
-  echo "" >&2
-
-  local i=1
-  for opt in "${options[@]}"; do
-    printf "  \033[36m%d)\033[0m %s\n" "$i" "$opt" >&2
-    ((i++))
-  done
-  local custom_idx=$i
-  printf "  \033[36m%d)\033[0m \033[2m✏️  自定义输入...\033[0m\n" "$custom_idx" >&2
-  echo "" >&2
-
-  local choice
-  while true; do
-    printf "请输入编号 [1-%d]: " "$custom_idx" >&2
-    read -r choice
-    if [ "$choice" = "$custom_idx" ]; then
-      printf "请输入自定义值: " >&2
-      read -r custom_val
-      echo "$custom_val"
-      return 0
-    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -lt "$custom_idx" ]; then
-      echo "${options[$((choice-1))]}"
+  if [ "$_HAS_GUM" = "true" ]; then
+    local result
+    # Build option list including custom input
+    local gum_opts=("${options[@]}" "✏️  自定义输入...")
+    result=$(printf '%s\n' "${gum_opts[@]}" | gum choose --header "${prompt}") || true
+    # User cancelled (Esc/Ctrl-C) → use first option as default
+    if [ -z "$result" ]; then
+      echo "${options[0]}"
       return 0
     fi
-    red "无效选择，请输入 1-${custom_idx}" >&2
-  done
+    if [ "$result" = "✏️  自定义输入..." ]; then
+      result=$(gum input --prompt "自定义输入: ") || true
+      # Cancelled custom input → fall back to first option
+      if [ -z "$result" ]; then
+        echo "${options[0]}"
+        return 0
+      fi
+    fi
+    echo "${result}"
+  else
+    echo "" >&2
+    echo -e "\033[1m${prompt}\033[0m" >&2
+    echo "" >&2
+
+    local i=1
+    for opt in "${options[@]}"; do
+      printf "  \033[36m%d)\033[0m %s\n" "$i" "$opt" >&2
+      ((i++))
+    done
+    local custom_idx=$i
+    printf "  \033[36m%d)\033[0m \033[2m✏️  自定义输入...\033[0m\n" "$custom_idx" >&2
+    echo "" >&2
+
+    local choice
+    while true; do
+      printf "请输入编号 [1-%d]: " "$custom_idx" >&2
+      IFS= read -r choice
+      if [ "$choice" = "$custom_idx" ]; then
+        printf "请输入自定义值: " >&2
+        IFS= read -r custom_val
+        echo "$custom_val"
+        return 0
+      elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -lt "$custom_idx" ]; then
+        echo "${options[$((choice-1))]}"
+        return 0
+      fi
+      red "无效选择，请输入 1-${custom_idx}" >&2
+    done
+  fi
 }
 
 # T015: Collect config fields via TTY (only for fields not provided via CLI)
@@ -294,15 +387,10 @@ _collect_config_tty() {
     return 0
   fi
 
-  echo ""
-  echo "============================================"
-  echo "        leaspec 初始化 — 配置采集"
-  echo "============================================"
+  _say_heading "leaspec 初始化 — 配置采集"
 
   # --- Section 1: 项目元信息 ---
-  echo ""
-  green "▸ 项目元信息"
-  echo ""
+  _say_green "项目元信息"
 
   if [ -z "${CFG_VERSION_SET:-}" ]; then
     CFG_VERSION="$(_prompt "  配置版本" "${CFG_VERSION:-1.0}")"
@@ -317,9 +405,7 @@ _collect_config_tty() {
   fi
 
   # --- Section 2: Git 追踪设置 ---
-  echo ""
-  green "▸ Git 追踪设置"
-  echo ""
+  _say_green "Git 追踪设置"
 
   # track_leaspec
   if [ -z "${CFG_TRACK_LEASPEC_SET:-}" ]; then
@@ -333,7 +419,7 @@ _collect_config_tty() {
       不追踪*) CFG_TRACK_LEASPEC="false" ;;
       *) CFG_TRACK_LEASPEC="$choice" ;;  # 自定义输入
     esac
-    echo "  → track_leaspec = $CFG_TRACK_LEASPEC"
+    _say "  → track_leaspec = $CFG_TRACK_LEASPEC"
   fi
 
   # track_agent_dirs
@@ -348,14 +434,13 @@ _collect_config_tty() {
       追踪*) CFG_TRACK_AGENT_DIRS="true" ;;
       *) CFG_TRACK_AGENT_DIRS="$choice" ;;  # 自定义输入
     esac
-    echo "  → track_agent_dirs = $CFG_TRACK_AGENT_DIRS"
+    _say "  → track_agent_dirs = $CFG_TRACK_AGENT_DIRS"
   fi
 
   # ignore_method (only relevant if something is not tracked)
   if [ -z "${CFG_IGNORE_METHOD_SET:-}" ]; then
     if [ "$CFG_TRACK_LEASPEC" = "false" ] || [ "$CFG_TRACK_AGENT_DIRS" = "false" ]; then
-      echo ""
-      yellow "  检测到有不追踪的目录，需要选择忽略机制。"
+      _say_yellow "  检测到有不追踪的目录，需要选择忽略机制。"
       local choice
       choice=$(_prompt_choice \
         "不追踪时使用哪种 git 忽略机制？" \
@@ -366,7 +451,7 @@ _collect_config_tty() {
         exclude*) CFG_IGNORE_METHOD="exclude" ;;
         *) CFG_IGNORE_METHOD="$choice" ;;  # 自定义输入
       esac
-      echo "  → ignore_method = $CFG_IGNORE_METHOD"
+      _say "  → ignore_method = $CFG_IGNORE_METHOD"
     fi
   fi
 }
@@ -377,15 +462,10 @@ _audit_constitution_tty() {
     return 0
   fi
 
-  echo ""
-  echo "============================================"
-  echo "        宪法 (Constitution) 审计"
-  echo "============================================"
+  _say_heading "宪法 (Constitution) 审计"
 
   # --- Metadata ---
-  echo ""
-  green "▸ 元信息"
-  echo ""
+  _say_green "元信息"
 
   local constitution_version="1.0.0"
   local today
@@ -400,21 +480,28 @@ _audit_constitution_tty() {
   local accepted_checks=()
   local total=${#_DEFAULT_PRINCIPLE_TITLES[@]}
 
-  echo ""
-  green "▸ Core Principles (共 $total 项)"
-  echo ""
-  echo "  以下是默认原则，请选择要保留的项（输入编号，逗号分隔，如 1,2,4,5）："
-  echo ""
+  _say_green "Core Principles (共 $total 项)"
+  _say "  以下是默认原则，请选择要保留的项（输入编号，逗号分隔，如 1,2,4,5）："
 
   for ((i=0; i<total; i++)); do
-    printf "  \033[36m%d)\033[0m \033[1m%s\033[0m\n" $((i+1)) "${_DEFAULT_PRINCIPLE_TITLES[$i]}"
-    printf "     %s\n" "${_DEFAULT_PRINCIPLE_DESCS[$i]}"
-    echo ""
+    if [ "$_HAS_GUM" = "true" ]; then
+      gum style --bold --foreground 6 "$((i+1))) ${_DEFAULT_PRINCIPLE_TITLES[$i]}" >&2
+      gum style "     ${_DEFAULT_PRINCIPLE_DESCS[$i]}" >&2
+    else
+      printf "  \033[36m%d)\033[0m \033[1m%s\033[0m\n" $((i+1)) "${_DEFAULT_PRINCIPLE_TITLES[$i]}"
+      printf "     %s\n" "${_DEFAULT_PRINCIPLE_DESCS[$i]}"
+    fi
+    echo "" >&2
   done
 
   local selection
-  printf "保留哪些原则？[1-%d 全部]: " "$total" >&2
-  read -r selection
+  if [ "$_HAS_GUM" = "true" ]; then
+    gum style --bold "保留哪些原则？(逗号分隔，留空表示全部)" >&2
+    selection=$(gum input --placeholder "1-${total} 全部" --prompt "> ") || true
+  else
+    printf "保留哪些原则？[1-%d 全部]: " "$total" >&2
+    IFS= read -r selection
+  fi
 
   # Default: keep all
   if [ -z "$selection" ]; then
@@ -452,8 +539,7 @@ _audit_constitution_tty() {
       accepted_descs+=("${_DEFAULT_PRINCIPLE_DESCS[$i]}")
       accepted_checks+=("${_DEFAULT_PRINCIPLE_CHECKS[$i]}")
     else
-      echo ""
-      yellow "  原则 $idx「${_DEFAULT_PRINCIPLE_TITLES[$i]}」未被选中。"
+      _say_yellow "  原则 ${idx}「${_DEFAULT_PRINCIPLE_TITLES[$i]}」未被选中。"
       local action
       action=$(_prompt_choice \
         "如何处理？" \
@@ -473,7 +559,7 @@ _audit_constitution_tty() {
           # "删除此项" → skip (don't add to accepted arrays)
           # 自定义输入 → also treated as replacement title
           if [ -n "$action" ] && [ "$action" != "删除此项" ]; then
-            yellow "    将「$action」作为自定义原则标题处理"
+            yellow "    将「${action}」作为自定义原则标题处理"
             local new_desc new_checks
             new_desc="$(_prompt "    新原则描述" "")"
             new_checks="$(_prompt "    检查项 (逗号分隔)" "")"
@@ -488,17 +574,14 @@ _audit_constitution_tty() {
 
   # --- Add new principles ---
   echo ""
+  local new_title new_desc new_checks
   while true; do
-    printf "添加额外原则？[y/N]: " >&2
-    read -r add_more
-    case "${add_more:-n}" in
-      y|Y|yes|YES) ;;
-      *) break ;;
-    esac
-    local new_title new_desc new_checks
+    if [ "$(_prompt_yn "添加额外原则？" "n")" != "true" ]; then
+      break
+    fi
     new_title="$(_prompt "  新原则标题" "")"
     if [ -z "$new_title" ]; then
-      echo "  标题不能为空，跳过。"
+      _say "  标题不能为空，跳过。"
       continue
     fi
     new_desc="$(_prompt "  新原则描述" "")"
@@ -506,29 +589,49 @@ _audit_constitution_tty() {
     accepted_titles+=("$new_title")
     accepted_descs+=("$new_desc")
     accepted_checks+=("$(echo "$new_checks" | tr ',' '|')")
-    echo "  → 已添加「$new_title」"
+    _say "  → 已添加「${new_title}」"
   done
 
   # --- Governance ---
-  echo ""
-  green "▸ Governance 规则"
-  echo ""
-  echo "  修订流程: 修改宪法需创建专门的 change proposal，标注 CONSTITUTION_CHANGE 标签"
-  echo "  版本策略: 每次修改递增 CONSTITUTION_VERSION"
-  echo "  合规审查: 每个 plan.md 必须通过 Constitution Check gates"
-  echo ""
-  printf "需要修改 Governance 规则吗？[y/N]: " >&2
-  read -r modify_gov
-  # Governance modification is rare — if yes, use simple prompts
-  if [ "${modify_gov:-n}" = "y" ] || [ "${modify_gov:-n}" = "Y" ]; then
-    echo "  (Governance 规则修改暂不支持，将使用默认值。请在生成后手动编辑 constitution.md)"
+  _say_green "Governance 规则"
+  _say "  修订流程: 修改宪法需创建专门的 change proposal，标注 CONSTITUTION_CHANGE 标签"
+  _say "  版本策略: 每次修改递增 CONSTITUTION_VERSION"
+  _say "  合规审查: 每个 plan.md 必须通过 Constitution Check gates"
+
+  local gov_amendment="" gov_versioning="" gov_review=""
+  local -a gov_extra_labels=()
+  local -a gov_extra_rules=()
+  if [ "$(_prompt_yn "需要修改 Governance 规则吗？" "n")" = "true" ]; then
+    echo "" >&2
+    gov_amendment="$(_prompt "  修订流程" "修改宪法需要创建专门的 change proposal，标注 CONSTITUTION_CHANGE 标签")"
+    gov_versioning="$(_prompt "  版本策略" "每次修改递增 CONSTITUTION_VERSION")"
+    gov_review="$(_prompt "  合规审查" "每个 plan.md 必须通过 Constitution Check gates")"
+
+    # Add custom governance rules
+    local extra_label extra_rule
+    while true; do
+      if [ "$(_prompt_yn "添加额外的 Governance 规则？" "n")" != "true" ]; then
+        break
+      fi
+      extra_label="$(_prompt "    规则名称" "")"
+      if [ -z "$extra_label" ]; then
+        _say "    名称不能为空，跳过。"
+        continue
+      fi
+      extra_rule="$(_prompt "    规则内容" "")"
+      gov_extra_labels+=("$extra_label")
+      gov_extra_rules+=("$extra_rule")
+      _say "    → 已添加「${extra_label}」"
+    done
   fi
 
   # --- Generate constitution temp file ---
   local tmpfile
   tmpfile="/tmp/leaspec-constitution-$(date +%s).md"
   _write_constitution "$tmpfile" "$constitution_version" "$ratification_date" "$today" \
-    accepted_titles accepted_descs accepted_checks
+    accepted_titles accepted_descs accepted_checks \
+    "$gov_amendment" "$gov_versioning" "$gov_review" \
+    gov_extra_labels gov_extra_rules
   CFG_CONSTITUTION_FILE="$tmpfile"
   echo ""
   green "  → 宪法文件已生成: $tmpfile"
@@ -544,11 +647,26 @@ _write_constitution() {
   local titles_name="$5"
   local descs_name="$6"
   local checks_name="$7"
+  local gov_amendment="${8:-}"
+  local gov_versioning="${9:-}"
+  local gov_review="${10:-}"
+  local gov_extra_labels_name="${11:-}"
+  local gov_extra_rules_name="${12:-}"
 
   # Copy arrays from caller's scope (bash 3.2 compatible — no namerefs)
   eval "local titles_arr=(\"\${${titles_name}[@]}\")"
   eval "local descs_arr=(\"\${${descs_name}[@]}\")"
   eval "local checks_arr=(\"\${${checks_name}[@]}\")"
+
+  # Copy extra governance arrays (may be empty)
+  local -a gov_extra_labels_arr=()
+  local -a gov_extra_rules_arr=()
+  if [ -n "$gov_extra_labels_name" ]; then
+    eval "gov_extra_labels_arr=(\"\${${gov_extra_labels_name}[@]}\")"
+  fi
+  if [ -n "$gov_extra_rules_name" ]; then
+    eval "gov_extra_rules_arr=(\"\${${gov_extra_rules_name}[@]}\")"
+  fi
 
   {
     echo "# Project Constitution — ${CFG_NAME}"
@@ -581,9 +699,17 @@ _write_constitution() {
 
     echo "## Governance"
     echo ""
-    echo "- **修订流程**: 修改宪法需要创建专门的 change proposal，标注 \`CONSTITUTION_CHANGE\` 标签"
-    echo "- **版本策略**: 每次修改递增 \`CONSTITUTION_VERSION\`"
-    echo "- **合规审查**: 每个 plan.md 必须通过 Constitution Check gates"
+    echo "- **修订流程**: ${gov_amendment:-修改宪法需要创建专门的 change proposal，标注 \`CONSTITUTION_CHANGE\` 标签}"
+    echo "- **版本策略**: ${gov_versioning:-每次修改递增 \`CONSTITUTION_VERSION\`}"
+    echo "- **合规审查**: ${gov_review:-每个 plan.md 必须通过 Constitution Check gates}"
+
+    # Extra governance rules added by user
+    if [ "${#gov_extra_labels_arr[@]}" -gt 0 ]; then
+      local j
+      for ((j=0; j<${#gov_extra_labels_arr[@]}; j++)); do
+        echo "- **${gov_extra_labels_arr[$j]}**: ${gov_extra_rules_arr[$j]}"
+      done
+    fi
     echo ""
     echo "---"
     echo ""
@@ -656,7 +782,7 @@ _handle_git_tracking() {
 
   # Track leaspec/
   if [ "$CFG_TRACK_LEASPEC" = "false" ]; then
-    if ! grep -q "^leaspec/" "$ignore_file" 2>/dev/null; then
+    if ! grep -qE '(^|/)leaspec(/|$)' "$ignore_file" 2>/dev/null; then
       echo "leaspec/" >> "$ignore_file"
       echo "  added leaspec/ to $ignore_file"
     fi
@@ -665,7 +791,7 @@ _handle_git_tracking() {
   # Track agent dirs (.claude/ .agents/)
   if [ "$CFG_TRACK_AGENT_DIRS" = "false" ]; then
     for agent_dir in ".claude/" ".agents/"; do
-      if ! grep -q "^${agent_dir}" "$ignore_file" 2>/dev/null; then
+      if ! grep -qE '(^|/)'"$(echo "${agent_dir%/}" | sed 's/\./\\./g')"'(/|$)' "$ignore_file" 2>/dev/null; then
         echo "${agent_dir}" >> "$ignore_file"
         echo "  added ${agent_dir} to $ignore_file"
       fi
@@ -681,7 +807,7 @@ _print_next_steps() {
   echo "============================================"
   echo ""
   echo "--- 创建的文件 ---"
-  find "$leaspec_root" -maxdepth 2 -not -path '*/templates/*' | sort | while read -r f; do
+  find "$leaspec_root" -maxdepth 2 -not -path '*/templates/*' | sort | while IFS= read -r f; do
     if [ -d "$f" ]; then
       echo "  $f/"
     else
