@@ -21,6 +21,7 @@ CFG_TRACK_AGENT_DIRS="false"
 CFG_IGNORE_METHOD="gitignore"
 CFG_CONSTITUTION_FILE=""
 CFG_NON_INTERACTIVE="false"
+CFG_YES="false"
 
 # Default constitution principles (3 parallel arrays, indexed 0-4)
 _DEFAULT_PRINCIPLE_TITLES=(
@@ -65,6 +66,7 @@ Options:
   --git-track true|false         [deprecated] Shortcut for --track-leaspec
   --constitution-file PATH       Pre-written constitution.md file
   --non-interactive              Skip all interactive prompts, use defaults
+  --yes                          Auto-accept all defaults (non-interactive alias)
   --help                         Show this help message
 
 Examples:
@@ -72,6 +74,7 @@ Examples:
   init.sh --name "myapp" --track-leaspec false --ignore-method exclude /path/to/project
   init.sh --non-interactive /path/to/project
   init.sh --name "myapp" --constitution-file /tmp/constitution.md /path/to/project
+  init.sh --yes /path/to/project
 USAGE
 }
 
@@ -125,6 +128,10 @@ _parse_args() {
         ;;
       --non-interactive)
         CFG_NON_INTERACTIVE="true"
+        shift
+        ;;
+      --yes|-y)
+        CFG_YES="true"
         shift
         ;;
       -*)
@@ -212,44 +219,64 @@ _is_tty() {
 }
 
 # T014: Prompt for text input with default value
+# NOTE: prompt output goes to stderr so it's visible even inside $()
 _prompt() {
   local label="$1"
   local default="$2"
   local input
 
-  printf "%s [%s]: " "$label" "$default"
+  printf "%s [%s]: " "$label" "$default" >&2
   read -r input
   echo "${input:-$default}"
+}
+
+# yes/no prompt — returns "true" or "false"
+_prompt_yn() {
+  local label="$1"
+  local default="$2"
+
+  case "$default" in
+    y|Y|yes|YES|true) printf "%s [Y/n]: " "$label" >&2 ;;
+    *)                printf "%s [y/N]: " "$label" >&2 ;;
+  esac
+
+  read -r answer
+  case "${answer:-$default}" in
+    y|Y|yes|YES|true)  echo "true"  ;;
+    n|N|no|NO|false)   echo "false" ;;
+    *)                 echo "false" ;;
+  esac
 }
 
 # T014b: Numbered option selection — returns selected option TEXT
 # Automatically appends a "自定义输入..." option as the last choice.
 # When user selects it, prompts for free-text input and returns that.
 # Usage: _prompt_choice "标题" "选项1" "选项2" "选项3"
+# NOTE: all user-facing output goes to stderr so it's visible even inside $()
 _prompt_choice() {
   local prompt="$1"
   shift
   local options=("$@")
 
-  echo ""
-  echo -e "\033[1m${prompt}\033[0m"
-  echo ""
+  echo "" >&2
+  echo -e "\033[1m${prompt}\033[0m" >&2
+  echo "" >&2
 
   local i=1
   for opt in "${options[@]}"; do
-    printf "  \033[36m%d)\033[0m %s\n" "$i" "$opt"
+    printf "  \033[36m%d)\033[0m %s\n" "$i" "$opt" >&2
     ((i++))
   done
   local custom_idx=$i
-  printf "  \033[36m%d)\033[0m \033[2m✏️  自定义输入...\033[0m\n" "$custom_idx" ""
-  echo ""
+  printf "  \033[36m%d)\033[0m \033[2m✏️  自定义输入...\033[0m\n" "$custom_idx" >&2
+  echo "" >&2
 
   local choice
   while true; do
-    printf "请输入编号 [1-%d]: " "$custom_idx"
+    printf "请输入编号 [1-%d]: " "$custom_idx" >&2
     read -r choice
     if [ "$choice" = "$custom_idx" ]; then
-      printf "请输入自定义值: "
+      printf "请输入自定义值: " >&2
       read -r custom_val
       echo "$custom_val"
       return 0
@@ -257,13 +284,13 @@ _prompt_choice() {
       echo "${options[$((choice-1))]}"
       return 0
     fi
-    red "无效选择，请输入 1-${custom_idx}"
+    red "无效选择，请输入 1-${custom_idx}" >&2
   done
 }
 
 # T015: Collect config fields via TTY (only for fields not provided via CLI)
 _collect_config_tty() {
-  if ! _is_tty || [ "$CFG_NON_INTERACTIVE" = "true" ]; then
+  if ! _is_tty || [ "$CFG_NON_INTERACTIVE" = "true" ] || [ "$CFG_YES" = "true" ]; then
     return 0
   fi
 
@@ -346,7 +373,7 @@ _collect_config_tty() {
 
 # T016: Audit constitution via TTY — 批量编号选择，不再逐条 y/n
 _audit_constitution_tty() {
-  if ! _is_tty || [ "$CFG_NON_INTERACTIVE" = "true" ] || [ -n "$CFG_CONSTITUTION_FILE" ]; then
+  if ! _is_tty || [ "$CFG_NON_INTERACTIVE" = "true" ] || [ "$CFG_YES" = "true" ] || [ -n "$CFG_CONSTITUTION_FILE" ]; then
     return 0
   fi
 
@@ -386,7 +413,7 @@ _audit_constitution_tty() {
   done
 
   local selection
-  printf "保留哪些原则？[1-%d 全部]: " "$total"
+  printf "保留哪些原则？[1-%d 全部]: " "$total" >&2
   read -r selection
 
   # Default: keep all
@@ -394,20 +421,33 @@ _audit_constitution_tty() {
     selection=$(seq -s, 1 "$total")
   fi
 
-  # Parse selection into array
-  local -A keep_map
+  # Parse selection into indexed array (bash 3.2 compatible — no associative arrays)
+  local -a keep_indices=()
   IFS=',' read -ra sel_parts <<< "$selection"
+  local part
   for part in "${sel_parts[@]}"; do
     part=$(echo "$part" | tr -d ' ')
     if [[ "$part" =~ ^[0-9]+$ ]] && [ "$part" -ge 1 ] && [ "$part" -le "$total" ]; then
-      keep_map[$part]=1
+      keep_indices+=("$part")
     fi
   done
+
+  # Helper: check if a number is in keep_indices
+  _index_kept() {
+    local needle="$1"
+    local k
+    for k in "${keep_indices[@]}"; do
+      if [ "$k" = "$needle" ]; then
+        return 0
+      fi
+    done
+    return 1
+  }
 
   # Process each principle
   for ((i=0; i<total; i++)); do
     local idx=$((i+1))
-    if [ "${keep_map[$idx]:-0}" -eq 1 ]; then
+    if _index_kept "$idx"; then
       accepted_titles+=("${_DEFAULT_PRINCIPLE_TITLES[$i]}")
       accepted_descs+=("${_DEFAULT_PRINCIPLE_DESCS[$i]}")
       accepted_checks+=("${_DEFAULT_PRINCIPLE_CHECKS[$i]}")
@@ -449,7 +489,7 @@ _audit_constitution_tty() {
   # --- Add new principles ---
   echo ""
   while true; do
-    printf "添加额外原则？[y/N]: "
+    printf "添加额外原则？[y/N]: " >&2
     read -r add_more
     case "${add_more:-n}" in
       y|Y|yes|YES) ;;
@@ -477,7 +517,7 @@ _audit_constitution_tty() {
   echo "  版本策略: 每次修改递增 CONSTITUTION_VERSION"
   echo "  合规审查: 每个 plan.md 必须通过 Constitution Check gates"
   echo ""
-  printf "需要修改 Governance 规则吗？[y/N]: "
+  printf "需要修改 Governance 规则吗？[y/N]: " >&2
   read -r modify_gov
   # Governance modification is rare — if yes, use simple prompts
   if [ "${modify_gov:-n}" = "y" ] || [ "${modify_gov:-n}" = "Y" ]; then
@@ -495,14 +535,20 @@ _audit_constitution_tty() {
 }
 
 # Write a constitution.md from principle arrays
+# Uses eval-based indirect array access for bash 3.2 compatibility
 _write_constitution() {
   local outfile="$1"
   local cversion="$2"
   local rdate="$3"
   local ldate="$4"
-  local -n titles_ref="$5"
-  local -n descs_ref="$6"
-  local -n checks_ref="$7"
+  local titles_name="$5"
+  local descs_name="$6"
+  local checks_name="$7"
+
+  # Copy arrays from caller's scope (bash 3.2 compatible — no namerefs)
+  eval "local titles_arr=(\"\${${titles_name}[@]}\")"
+  eval "local descs_arr=(\"\${${descs_name}[@]}\")"
+  eval "local checks_arr=(\"\${${checks_name}[@]}\")"
 
   {
     echo "# Project Constitution — ${CFG_NAME}"
@@ -513,16 +559,18 @@ _write_constitution() {
     echo "## Core Principles"
     echo ""
 
-    local count=${#titles_ref[@]}
+    local count=${#titles_arr[@]}
+    local i
     for ((i=0; i<count; i++)); do
       local pnum=$((i + 1))
-      echo "### Principle ${pnum}: ${titles_ref[$i]}"
+      echo "### Principle ${pnum}: ${titles_arr[$i]}"
       echo ""
-      echo "**描述**: ${descs_ref[$i]}"
+      echo "**描述**: ${descs_arr[$i]}"
       echo ""
       echo "**检查项**:"
       # Split checks by |
-      IFS='|' read -ra items <<< "${checks_ref[$i]}"
+      IFS='|' read -ra items <<< "${checks_arr[$i]}"
+      local item
       for item in "${items[@]}"; do
         echo "- [ ] ${item}"
       done
@@ -573,29 +621,37 @@ _generate_constitution() {
   if [ -n "$CFG_CONSTITUTION_FILE" ] && [ -f "$CFG_CONSTITUTION_FILE" ]; then
     cat "$CFG_CONSTITUTION_FILE" > "$leaspec_root/constitution.md"
   else
-    # Fallback: use template with sed substitution
-    local templates_src="${TEMPLATES_SRC:-$SCRIPT_DIR/../templates}"
-    if [ -f "$templates_src/constitution.md" ]; then
-      local today
-      today=$(date +%Y-%m-%d)
-      sed "s/{{PROJECT_NAME}}/${CFG_NAME}/g; s/{{DATE}}/${today}/g" \
-        "$templates_src/constitution.md" > "$leaspec_root/constitution.md"
-    fi
+    # Generate from built-in default principles
+    local today
+    today=$(date +%Y-%m-%d)
+    _write_constitution "$leaspec_root/constitution.md" "1.0.0" "$today" "$today" \
+      _DEFAULT_PRINCIPLE_TITLES _DEFAULT_PRINCIPLE_DESCS _DEFAULT_PRINCIPLE_CHECKS
   fi
 }
 
 _handle_git_tracking() {
   local project_root="$1"
 
+  # Check if project is a git repo
+  local is_git_repo="false"
+  if [ -d "$project_root/.git" ] || git -C "$project_root" rev-parse --git-dir >/dev/null 2>&1; then
+    is_git_repo="true"
+  fi
+
   # Determine ignore file path
   local ignore_file
   if [ "$CFG_IGNORE_METHOD" = "exclude" ]; then
-    ignore_file="$project_root/.git/info/exclude"
+    if [ "$is_git_repo" = "true" ]; then
+      ignore_file="$project_root/.git/info/exclude"
+    else
+      echo "  [!] 项目不是 git 仓库，exclude 方法不可用，回退到 .gitignore"
+      ignore_file="$project_root/.gitignore"
+    fi
   else
     ignore_file="$project_root/.gitignore"
   fi
 
-  # Ensure parent dir exists (for .git/info/exclude)
+  # Ensure parent dir exists
   mkdir -p "$(dirname "$ignore_file")"
 
   # Track leaspec/
@@ -659,14 +715,14 @@ main() {
   # Check for existing leaspec/
   local leaspec_root="$PROJECT_ROOT/leaspec"
   if [ -f "$leaspec_root/config.yaml" ]; then
-    if _is_tty && [ "$CFG_NON_INTERACTIVE" != "true" ]; then
+    if _is_tty && [ "$CFG_NON_INTERACTIVE" != "true" ] && [ "$CFG_YES" != "true" ]; then
       local merge
       merge=$(_prompt_yn "leaspec/ 已存在，是否合并（跳过已有文件）？" "y")
       if [ "$merge" != "true" ]; then
         echo "已取消"
         exit 0
       fi
-    elif [ "$CFG_NON_INTERACTIVE" = "true" ]; then
+    else
       echo "==> leaspec/ 已存在，跳过已有文件继续"
     fi
   fi
@@ -674,8 +730,6 @@ main() {
   # TTY interaction (skipped in Agent mode / non-interactive)
   _collect_config_tty
   _audit_constitution_tty
-
-  local templates_src="${TEMPLATES_SRC:-$SCRIPT_DIR/../templates}"
 
   echo "==> 初始化 leaspec 到 $leaspec_root"
 
