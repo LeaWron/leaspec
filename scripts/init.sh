@@ -222,28 +222,42 @@ _prompt() {
   echo "${input:-$default}"
 }
 
-# T014: Prompt for yes/no with default
-_prompt_yn() {
-  local question="$1"
-  local default="${2:-y}"
+# T014b: Numbered option selection — returns selected option TEXT
+# Automatically appends a "自定义输入..." option as the last choice.
+# When user selects it, prompts for free-text input and returns that.
+# Usage: _prompt_choice "标题" "选项1" "选项2" "选项3"
+_prompt_choice() {
+  local prompt="$1"
+  shift
+  local options=("$@")
 
-  local hint
-  if [ "$default" = "y" ]; then
-    hint="[Y/n]"
-  else
-    hint="[y/N]"
-  fi
+  echo ""
+  echo -e "\033[1m${prompt}\033[0m"
+  echo ""
 
+  local i=1
+  for opt in "${options[@]}"; do
+    printf "  \033[36m%d)\033[0m %s\n" "$i" "$opt"
+    ((i++))
+  done
+  local custom_idx=$i
+  printf "  \033[36m%d)\033[0m \033[2m✏️  自定义输入...\033[0m\n" "$custom_idx" ""
+  echo ""
+
+  local choice
   while true; do
-    printf "%s %s: " "$question" "$hint"
-    read -r answer
-    answer="${answer:-$default}"
-
-    case "$(echo "$answer" | tr '[:upper:]' '[:lower:]')" in
-      y|yes) echo "true"; return 0 ;;
-      n|no)  echo "false"; return 0 ;;
-      *)     echo "请输入 y/yes 或 n/no" >&2 ;;
-    esac
+    printf "请输入编号 [1-%d]: " "$custom_idx"
+    read -r choice
+    if [ "$choice" = "$custom_idx" ]; then
+      printf "请输入自定义值: "
+      read -r custom_val
+      echo "$custom_val"
+      return 0
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -lt "$custom_idx" ]; then
+      echo "${options[$((choice-1))]}"
+      return 0
+    fi
+    red "无效选择，请输入 1-${custom_idx}"
   done
 }
 
@@ -254,122 +268,230 @@ _collect_config_tty() {
   fi
 
   echo ""
-  echo "--- config.yaml 配置 ---"
+  echo "============================================"
+  echo "        leaspec 初始化 — 配置采集"
+  echo "============================================"
 
-  # version
+  # --- Section 1: 项目元信息 ---
+  echo ""
+  green "▸ 项目元信息"
+  echo ""
+
   if [ -z "${CFG_VERSION_SET:-}" ]; then
-    CFG_VERSION="$(_prompt "配置版本" "${CFG_VERSION:-1.0}")"
+    CFG_VERSION="$(_prompt "  配置版本" "${CFG_VERSION:-1.0}")"
   fi
 
-  # project.name
   if [ -z "${CFG_NAME_SET:-}" ]; then
-    CFG_NAME="$(_prompt "项目名称" "${CFG_NAME:-$(basename "$PROJECT_ROOT")}")"
+    CFG_NAME="$(_prompt "  项目名称" "${CFG_NAME:-$(basename "$PROJECT_ROOT")}")"
   fi
 
-  # project.description
   if [ -z "${CFG_DESC_SET:-}" ]; then
-    CFG_DESC="$(_prompt "项目描述" "")"
+    CFG_DESC="$(_prompt "  项目描述（可选）" "")"
   fi
+
+  # --- Section 2: Git 追踪设置 ---
+  echo ""
+  green "▸ Git 追踪设置"
+  echo ""
 
   # track_leaspec
   if [ -z "${CFG_TRACK_LEASPEC_SET:-}" ]; then
-    yellow "Git 追踪设置: track_leaspec — leaspec/ 目录是否被 git 追踪？"
-    CFG_TRACK_LEASPEC="$(_prompt_yn "追踪 leaspec/？" "y")"
+    local choice
+    choice=$(_prompt_choice \
+      "leaspec/ 目录是否纳入 git 追踪？" \
+      "追踪 — leaspec/ 规范文件提交到仓库，团队共享 (推荐)" \
+      "不追踪 — 个人使用 leaspec 但团队尚未采用")
+    case "$choice" in
+      追踪*) CFG_TRACK_LEASPEC="true" ;;
+      不追踪*) CFG_TRACK_LEASPEC="false" ;;
+      *) CFG_TRACK_LEASPEC="$choice" ;;  # 自定义输入
+    esac
+    echo "  → track_leaspec = $CFG_TRACK_LEASPEC"
   fi
 
   # track_agent_dirs
   if [ -z "${CFG_TRACK_AGENT_DIRS_SET:-}" ]; then
-    yellow "Git 追踪设置: track_agent_dirs — .claude/ .agents/ 是否被 git 追踪？"
-    CFG_TRACK_AGENT_DIRS="$(_prompt_yn "追踪 agent 目录？" "n")"
+    local choice
+    choice=$(_prompt_choice \
+      ".claude/ .agents/ 等 agent 目录是否纳入 git 追踪？" \
+      "不追踪 — 每个开发者独立维护 (推荐)" \
+      "追踪 — 团队统一 agent 配置时需要")
+    case "$choice" in
+      不追踪*) CFG_TRACK_AGENT_DIRS="false" ;;
+      追踪*) CFG_TRACK_AGENT_DIRS="true" ;;
+      *) CFG_TRACK_AGENT_DIRS="$choice" ;;  # 自定义输入
+    esac
+    echo "  → track_agent_dirs = $CFG_TRACK_AGENT_DIRS"
   fi
 
-  # ignore_method
+  # ignore_method (only relevant if something is not tracked)
   if [ -z "${CFG_IGNORE_METHOD_SET:-}" ]; then
-    yellow "忽略机制: gitignore (团队共享) 或 exclude (仅本地)？"
-    local method
-    method="$(_prompt "ignore_method [gitignore/exclude]" "gitignore")"
-    while [ "$method" != "gitignore" ] && [ "$method" != "exclude" ]; do
-      echo "无效值，请输入 'gitignore' 或 'exclude'"
-      method="$(_prompt "ignore_method [gitignore/exclude]" "gitignore")"
-    done
-    CFG_IGNORE_METHOD="$method"
+    if [ "$CFG_TRACK_LEASPEC" = "false" ] || [ "$CFG_TRACK_AGENT_DIRS" = "false" ]; then
+      echo ""
+      yellow "  检测到有不追踪的目录，需要选择忽略机制。"
+      local choice
+      choice=$(_prompt_choice \
+        "不追踪时使用哪种 git 忽略机制？" \
+        "gitignore — 写入项目根 .gitignore，团队共享 (推荐)" \
+        "exclude — 写入 .git/info/exclude，仅本地生效")
+      case "$choice" in
+        gitignore*) CFG_IGNORE_METHOD="gitignore" ;;
+        exclude*) CFG_IGNORE_METHOD="exclude" ;;
+        *) CFG_IGNORE_METHOD="$choice" ;;  # 自定义输入
+      esac
+      echo "  → ignore_method = $CFG_IGNORE_METHOD"
+    fi
   fi
 }
 
-# T016: Audit constitution via TTY
+# T016: Audit constitution via TTY — 批量编号选择，不再逐条 y/n
 _audit_constitution_tty() {
   if ! _is_tty || [ "$CFG_NON_INTERACTIVE" = "true" ] || [ -n "$CFG_CONSTITUTION_FILE" ]; then
     return 0
   fi
 
   echo ""
-  echo "--- 宪法审计 ---"
+  echo "============================================"
+  echo "        宪法 (Constitution) 审计"
+  echo "============================================"
+
+  # --- Metadata ---
+  echo ""
+  green "▸ 元信息"
   echo ""
 
-  # Metadata audit
   local constitution_version="1.0.0"
   local today
   today=$(date +%Y-%m-%d)
-  constitution_version="$(_prompt "CONSTITUTION_VERSION" "$constitution_version")"
+  constitution_version="$(_prompt "  CONSTITUTION_VERSION" "$constitution_version")"
   local ratification_date
-  ratification_date="$(_prompt "RATIFICATION_DATE" "$today")"
+  ratification_date="$(_prompt "  RATIFICATION_DATE" "$today")"
 
-  # Principles audit
+  # --- Core Principles: 批量展示 + 编号多选 ---
   local accepted_titles=()
   local accepted_descs=()
   local accepted_checks=()
   local total=${#_DEFAULT_PRINCIPLE_TITLES[@]}
 
   echo ""
-  echo "--- Core Principles ($total 项) ---"
-  for ((i=0; i<total; i++)); do
-    echo ""
-    echo "原则 $((i+1)): ${_DEFAULT_PRINCIPLE_TITLES[$i]}"
-    echo "  ${_DEFAULT_PRINCIPLE_DESCS[$i]}"
-    local keep
-    keep=$(_prompt_yn "保留此原则？" "y")
+  green "▸ Core Principles (共 $total 项)"
+  echo ""
+  echo "  以下是默认原则，请选择要保留的项（输入编号，逗号分隔，如 1,2,4,5）："
+  echo ""
 
-    if [ "$keep" = "true" ]; then
+  for ((i=0; i<total; i++)); do
+    printf "  \033[36m%d)\033[0m \033[1m%s\033[0m\n" $((i+1)) "${_DEFAULT_PRINCIPLE_TITLES[$i]}"
+    printf "     %s\n" "${_DEFAULT_PRINCIPLE_DESCS[$i]}"
+    echo ""
+  done
+
+  local selection
+  printf "保留哪些原则？[1-%d 全部]: " "$total"
+  read -r selection
+
+  # Default: keep all
+  if [ -z "$selection" ]; then
+    selection=$(seq -s, 1 "$total")
+  fi
+
+  # Parse selection into array
+  local -A keep_map
+  IFS=',' read -ra sel_parts <<< "$selection"
+  for part in "${sel_parts[@]}"; do
+    part=$(echo "$part" | tr -d ' ')
+    if [[ "$part" =~ ^[0-9]+$ ]] && [ "$part" -ge 1 ] && [ "$part" -le "$total" ]; then
+      keep_map[$part]=1
+    fi
+  done
+
+  # Process each principle
+  for ((i=0; i<total; i++)); do
+    local idx=$((i+1))
+    if [ "${keep_map[$idx]:-0}" -eq 1 ]; then
       accepted_titles+=("${_DEFAULT_PRINCIPLE_TITLES[$i]}")
       accepted_descs+=("${_DEFAULT_PRINCIPLE_DESCS[$i]}")
       accepted_checks+=("${_DEFAULT_PRINCIPLE_CHECKS[$i]}")
     else
+      echo ""
+      yellow "  原则 $idx「${_DEFAULT_PRINCIPLE_TITLES[$i]}」未被选中。"
       local action
-      action="$(_prompt "替换(r) 还是 删除(d)？" "d")"
-      if [ "$action" = "r" ] || [ "$action" = "replace" ]; then
-        local new_title new_desc new_checks
-        new_title="$(_prompt "新原则标题" "")"
-        new_desc="$(_prompt "新原则描述" "")"
-        new_checks="$(_prompt "检查项 (逗号分隔)" "")"
-        accepted_titles+=("$new_title")
-        accepted_descs+=("$new_desc")
-        accepted_checks+=("$(echo "$new_checks" | tr ',' '|')")
-      fi
+      action=$(_prompt_choice \
+        "如何处理？" \
+        "删除此项" \
+        "替换为新原则")
+      case "$action" in
+        替换*)
+          local new_title new_desc new_checks
+          new_title="$(_prompt "    新原则标题" "")"
+          new_desc="$(_prompt "    新原则描述" "")"
+          new_checks="$(_prompt "    检查项 (逗号分隔)" "")"
+          accepted_titles+=("$new_title")
+          accepted_descs+=("$new_desc")
+          accepted_checks+=("$(echo "$new_checks" | tr ',' '|')")
+          ;;
+        *)
+          # "删除此项" → skip (don't add to accepted arrays)
+          # 自定义输入 → also treated as replacement title
+          if [ -n "$action" ] && [ "$action" != "删除此项" ]; then
+            yellow "    将「$action」作为自定义原则标题处理"
+            local new_desc new_checks
+            new_desc="$(_prompt "    新原则描述" "")"
+            new_checks="$(_prompt "    检查项 (逗号分隔)" "")"
+            accepted_titles+=("$action")
+            accepted_descs+=("$new_desc")
+            accepted_checks+=("$(echo "$new_checks" | tr ',' '|')")
+          fi
+          ;;
+      esac
     fi
   done
 
-  # Add new principles
+  # --- Add new principles ---
+  echo ""
   while true; do
-    local add_more
-    add_more=$(_prompt_yn "添加额外原则？" "n")
-    if [ "$add_more" != "true" ]; then
-      break
-    fi
+    printf "添加额外原则？[y/N]: "
+    read -r add_more
+    case "${add_more:-n}" in
+      y|Y|yes|YES) ;;
+      *) break ;;
+    esac
     local new_title new_desc new_checks
-    new_title="$(_prompt "新原则标题" "")"
-    new_desc="$(_prompt "新原则描述" "")"
-    new_checks="$(_prompt "检查项 (逗号分隔)" "")"
+    new_title="$(_prompt "  新原则标题" "")"
+    if [ -z "$new_title" ]; then
+      echo "  标题不能为空，跳过。"
+      continue
+    fi
+    new_desc="$(_prompt "  新原则描述" "")"
+    new_checks="$(_prompt "  检查项 (逗号分隔)" "")"
     accepted_titles+=("$new_title")
     accepted_descs+=("$new_desc")
     accepted_checks+=("$(echo "$new_checks" | tr ',' '|')")
+    echo "  → 已添加「$new_title」"
   done
 
-  # Generate constitution temp file
+  # --- Governance ---
+  echo ""
+  green "▸ Governance 规则"
+  echo ""
+  echo "  修订流程: 修改宪法需创建专门的 change proposal，标注 CONSTITUTION_CHANGE 标签"
+  echo "  版本策略: 每次修改递增 CONSTITUTION_VERSION"
+  echo "  合规审查: 每个 plan.md 必须通过 Constitution Check gates"
+  echo ""
+  printf "需要修改 Governance 规则吗？[y/N]: "
+  read -r modify_gov
+  # Governance modification is rare — if yes, use simple prompts
+  if [ "${modify_gov:-n}" = "y" ] || [ "${modify_gov:-n}" = "Y" ]; then
+    echo "  (Governance 规则修改暂不支持，将使用默认值。请在生成后手动编辑 constitution.md)"
+  fi
+
+  # --- Generate constitution temp file ---
   local tmpfile
   tmpfile="/tmp/leaspec-constitution-$(date +%s).md"
   _write_constitution "$tmpfile" "$constitution_version" "$ratification_date" "$today" \
     accepted_titles accepted_descs accepted_checks
   CFG_CONSTITUTION_FILE="$tmpfile"
+  echo ""
+  green "  → 宪法文件已生成: $tmpfile"
 }
 
 # Write a constitution.md from principle arrays
