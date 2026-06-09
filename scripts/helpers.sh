@@ -125,7 +125,8 @@ get_next_change_number() {
       local name
       name=$(basename "$dir")
       local num
-      num=$(echo "$name" | grep -oP '^\d+' || echo "0")
+      num=$(printf '%s\n' "$name" | sed -n 's/^\([0-9][0-9]*\).*/\1/p')
+      num="${num:-0}"
       num=$((10#$num))
       if [ "$num" -gt "$max" ]; then
         max=$num

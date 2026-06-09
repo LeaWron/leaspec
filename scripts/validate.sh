@@ -28,6 +28,26 @@ check() {
   fi
 }
 
+has_empty_section() {
+  awk '
+    /^##[[:space:]]+[^[:space:]]/ {
+      if (seen && !has_content) {
+        found = 1
+        exit
+      }
+      seen = 1
+      has_content = 0
+      next
+    }
+    seen && NF {
+      has_content = 1
+    }
+    END {
+      exit(found ? 0 : 1)
+    }
+  ' "$1"
+}
+
 echo "==> leaspec validate: $TARGET"
 echo ""
 
@@ -67,13 +87,13 @@ if [ -f "$TARGET/constitution.md" ] && [ -d "$TARGET/specs" ] && [ -d "$TARGET/c
         fi
 
         # 检查是否有空的 section
-        if grep -P '^##\s+\S+.*\n\n\s*##' "$spec" > /dev/null 2>&1; then
+        if has_empty_section "$spec"; then
           yellow "    [!] 可能存在空的 section"
           WARNINGS=$((WARNINGS + 1))
         fi
 
         # 检查 FR 编号格式
-        if grep -qP 'FR-\d{3}' "$spec"; then
+        if grep -Eq 'FR-[0-9]{3}' "$spec"; then
           green "    [✓] FR 编号格式正确"
         fi
       done
@@ -104,14 +124,14 @@ if [ -f "$TARGET/constitution.md" ] && [ -d "$TARGET/specs" ] && [ -d "$TARGET/c
             WARNINGS=$((WARNINGS + 1))
           fi
 
-          if grep -qiP 'ADDED|MODIFIED|REMOVED' "$change/spec.md"; then
+          if grep -Eqi 'ADDED|MODIFIED|REMOVED' "$change/spec.md"; then
             green "    [✓] spec.md 包含增量标记"
           fi
         fi
 
         if [ -f "$change/tasks.md" ]; then
-          done_count=$(grep -cP '^\- \[x\]' "$change/tasks.md" 2>/dev/null || echo 0)
-          total_count=$(grep -cP '^\- \[[ x]\]' "$change/tasks.md" 2>/dev/null || echo 0)
+          done_count=$(grep -cE '^- \[x\]' "$change/tasks.md" 2>/dev/null || echo 0)
+          total_count=$(grep -cE '^- \[[ x]\]' "$change/tasks.md" 2>/dev/null || echo 0)
           echo "    任务进度: $done_count/$total_count"
         fi
       done

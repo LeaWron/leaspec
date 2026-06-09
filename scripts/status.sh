@@ -31,7 +31,7 @@ if [ -d "$LEASPEC_ROOT/specs" ]; then
     [ -f "$spec" ] || continue
     spec_count=$((spec_count + 1))
     spec_name=$(basename "$spec" .md)
-    fr_count=$(grep -cP 'FR-\d{3}' "$spec" 2>/dev/null || echo 0)
+    fr_count=$(grep -cE 'FR-[0-9]{3}' "$spec" 2>/dev/null || echo 0)
     last_updated=$(grep "Last Updated" "$spec" 2>/dev/null | head -1 | sed 's/.*: //' || echo "unknown")
     echo "  [$spec_name] $fr_count 需求 | 更新于 $last_updated"
   done
@@ -61,8 +61,8 @@ if [ -d "$LEASPEC_ROOT/changes" ]; then
 
     # 任务进度
     if [ -f "$change/tasks.md" ]; then
-      done_count=$(grep -cP '^\- \[x\]' "$change/tasks.md" 2>/dev/null || echo 0)
-      total_count=$(grep -cP '^\- \[[ x]\]' "$change/tasks.md" 2>/dev/null || echo 0)
+      done_count=$(grep -cE '^- \[x\]' "$change/tasks.md" 2>/dev/null || echo 0)
+      total_count=$(grep -cE '^- \[[ x]\]' "$change/tasks.md" 2>/dev/null || echo 0)
       task_progress="$done_count/$total_count"
     else
       task_progress="-"
