@@ -43,17 +43,20 @@ terminates: leaspec-brainstorm, leaspec-specify, leaspec-change
 - 更新目标 spec 的 **Last Updated** 为当前日期
 - 如有新增 Entities / User Stories / Success Criteria → 同步追加
 
-### Step 3: 运行归档脚本
+### Step 3: 移动变更目录
+
+当前没有确定性归档脚本。完成 Step 2 的 spec 合并后，手工执行归档移动:
 
 ```bash
-bash leaspec/scripts/archive.sh "leaspec/changes/<NNN-name>" "leaspec/archive"
+mkdir -p leaspec/archive
+mv "leaspec/changes/<NNN-name>" "leaspec/archive/<YYYY-MM-DD>-<name>"
 ```
 
-脚本确定性地:
-1. 检查变更完整性（proposal, spec 是否存在）
-2. 合并 spec 增量到主规范
-3. 移动变更目录到 `archive/YYYY-MM-DD-<name>/`
-4. 清理空的变更目录
+移动规则:
+1. 移动前检查变更完整性（proposal, spec 是否存在）
+2. 仅在主规范已完成合并后移动变更目录
+3. 归档路径使用 `archive/YYYY-MM-DD-<name>/`
+4. 如目标归档目录已存在，停止并请用户确认新的归档目录名
 
 ### Step 4: 提交
 
