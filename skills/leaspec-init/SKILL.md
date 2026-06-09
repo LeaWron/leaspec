@@ -17,6 +17,8 @@ terminates: leaspec-brainstorm, leaspec-specify, leaspec-change
 
 **Agent 全程使用 `AskUserQuestion` 做选项式交互，禁止依赖 shell TTY prompt。**
 
+- **交互能力门禁**: 在第一次需要 `AskUserQuestion` 或等价结构化用户输入之前，必须检查当前 Agent 运行环境是否真的提供该工具。Codex 中只有 Plan mode 可用 `request_user_input`；Default mode 不具备该交互能力。其他 Agent 也必须使用其原生结构化提问能力。
+- 如果当前工具列表中没有可用的结构化交互工具，且用户没有提前提供完整决策或明确授权使用默认值，Agent 必须立即中断在第一个副作用之前，不得创建/修改文件、不得运行 `init.sh`、不得用默认值继续。中断提示必须说明当前模式无法进行 leaspec 初始化交互，并给出两种继续方式：切换到支持交互的模式，或重新发起请求时一次性提供 `track_leaspec`、`track_agent_dirs`、`ignore_method`、`project.name`、`project.description`、`version` 以及宪法审计决策。
 - 每个 `AskUserQuestion` 问题都会自动附带 **"Other" 选项**，用户可随时选择 "Other" 并输入自定义内容，确保选项不会限制用户的表达
 - `init.sh` 始终以 `--non-interactive` + 全部显式参数调用，shell 脚本的 TTY 交互仅保留给人类直接运行脚本的场景
 - 人类直接运行 `init.sh` 时，每个编号选择也提供「✏️ 自定义输入...」选项
