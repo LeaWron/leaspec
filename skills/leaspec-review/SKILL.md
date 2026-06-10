@@ -26,12 +26,15 @@ terminates: leaspec-archive, leaspec-execute
 逐条对照 `spec.md` 中的需求:
 
 - [ ] 每个 Functional Requirement (FR-XXX) 都有对应实现
+- [ ] 每个 Functional Requirement 的审查结果都包含 FR ID 和一句话梗概
 - [ ] 每个 Acceptance Scenario 都有对应测试
 - [ ] 没有实现超出 spec 范围的「多余」功能（scope creep = bug）
 - [ ] 没有遗漏 spec 中的任何需求
 - [ ] 实现的语义与 spec 描述一致
 
 **Spec Reviewer 心态:** 不要信任报告。亲自读代码。实现者的报告可能过时、不完整、过于乐观。验证每一条 FR。
+
+**FR 梗概规则:** 从 Functional Requirements 表的 Requirement 文本提炼一句短语，保留核心对象和行为。不要只写 ID；不要复制整段长需求。示例: `FR-003 — 支持 --constitution-file 覆盖默认宪法`。
 
 ### 阶段 2: 代码质量审查（Spec 合规通过后才做）
 
@@ -95,19 +98,21 @@ terminates: leaspec-archive, leaspec-execute
 - Issues: X (Critical: A, Important: B, Minor: C)
 
 ## Critical Issues
-1. {{ISSUE}} — {{FILE}}:{{LINE}}
+1. [{{FR_ID}} — {{FR_SUMMARY}}] {{ISSUE}} — {{FILE}}:{{LINE}}
 
 ## Important Issues
-1. {{ISSUE}} — {{FILE}}:{{LINE}}
+1. [{{FR_ID}} — {{FR_SUMMARY}}] {{ISSUE}} — {{FILE}}:{{LINE}}
 
 ## Minor Suggestions
 1. {{SUGGESTION}}
 
 ## Spec Coverage
-| FR ID | Has Implementation? | Has Test? |
-|-------|---------------------|-----------|
-| FR-001 | ✅ | ✅ |
+| FR ID | FR Summary | Has Implementation? | Has Test? | Evidence |
+|-------|------------|---------------------|-----------|----------|
+| FR-001 | 创建 leaspec 标准目录结构 | ✅ | ✅ | `scripts/init.sh`, `test_phase1.sh` |
 ```
+
+若 issue 不对应具体 FR，使用 `[General — {{AREA_SUMMARY}}]` 前缀，例如 `[General — 测试隔离性]`。
 
 ## 过渡
 
