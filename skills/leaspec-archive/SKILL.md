@@ -18,6 +18,7 @@ terminates: leaspec-brainstorm, leaspec-specify, leaspec-change
 - 变更目录下所有 tasks 已完成（全部 `[X]`）
 - Review 已通过（无 CRITICAL / IMPORTANT Issues）
 - 用户确认归档
+- 若变更修改或移除已有需求，stale spec 检测必须通过
 
 ## 执行流程
 
@@ -31,6 +32,15 @@ terminates: leaspec-brainstorm, leaspec-specify, leaspec-change
 请用户确认。
 
 ### Step 2: 合并增量规范
+
+合并前先执行 stale spec 检测:
+
+1. 检查变更目录是否记录了被修改/移除需求的基线指纹或等价基线记录
+2. 对当前 `leaspec/specs/` 中对应需求重新计算或人工核对当前内容
+3. 如果当前内容与基线不一致，停止归档
+4. 提示用户先同步/人工协调该需求，再重新 review 和 archive
+
+不得在 stale spec 风险未解决时继续合并。
 
 对于 `change/NNN-name/spec.md` 中的变更，合并到对应 `specs/<domain>.md`:
 

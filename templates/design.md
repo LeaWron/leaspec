@@ -46,13 +46,16 @@ src/
 
 ## Constitution Check
 
+<!-- 从当前项目的 leaspec/constitution.md 读取 Core Principles，并逐条检查。以下为默认 leaspec 宪法示例。 -->
+
 | Gate | Status | Notes |
 |------|--------|-------|
-| Library-First | ✅ / ⚠️ | {{NOTES}} |
-| Test-First (TDD) | ✅ / ⚠️ | {{NOTES}} |
+| Spec-as-Truth | ✅ / ⚠️ | {{NOTES}} |
+| Trigger-by-Need | ✅ / ⚠️ | {{NOTES}} |
+| Incremental-First | ✅ / ⚠️ | {{NOTES}} |
+| Design-Before-Code | ✅ / ⚠️ | {{NOTES}} |
 | Simplicity | ✅ / ⚠️ | {{NOTES}} |
-| Integration-First Testing | ✅ / ⚠️ | {{NOTES}} |
-| Observable | ✅ / ⚠️ | {{NOTES}} |
+| Respect-Comments | ✅ / ⚠️ | {{NOTES}} |
 
 ## Complexity Tracking
 

@@ -52,15 +52,16 @@ terminates: leaspec-execute
 1. **Technical Context** — 从 Step 1 获取
 2. **Architecture Decisions** — 每个决策单独说明 Context / Options / Decision / Rationale
 3. **Project Structure** — 源码树
-4. **Constitution Check（宪法门禁）** — 逐条检查:
+4. **Constitution Check（宪法门禁）** — 读取当前项目的 `leaspec/constitution.md`，对 `Core Principles` 逐条检查。不得使用过期的硬编码原则列表。
 
 | Gate | Status | Notes |
 |------|--------|-------|
-| Library-First | ✅ / ⚠️ | 功能是否可独立运行？ |
-| Test-First (TDD) | ✅ / ⚠️ | 测试策略？ |
-| Simplicity | ✅ / ⚠️ | 是最简方案吗？ |
-| Integration-First Testing | ✅ / ⚠️ | 集成测试如何组织？ |
-| Observable | ✅ / ⚠️ | 关键操作有日志/指标？ |
+| Spec-as-Truth | ✅ / ⚠️ | 规范是否作为真相源？ |
+| Trigger-by-Need | ✅ / ⚠️ | 流程选择是否匹配需求？ |
+| Incremental-First | ✅ / ⚠️ | 是否优先复用已有规范并最小化变更？ |
+| Design-Before-Code | ✅ / ⚠️ | 是否先完成设计再实现？ |
+| Simplicity | ✅ / ⚠️ | 是否是最简单可行方案？ |
+| Respect-Comments | ✅ / ⚠️ | 是否避免无关注释改动？ |
 
 5. **Complexity Tracking** — 记录违规和例外:
 
@@ -100,6 +101,17 @@ Phase N: Polish      — 文档、性能、收尾
 3. **`[Story]` 标签**: User Story 阶段必须: `[US1]`, `[US2]`。Setup/Foundational 阶段无标签
 4. **描述**: 必须包含精确文件路径
 5. **粒度**: 单个任务应在 5-15 分钟内可完成
+6. **Write Scope**: 每个任务必须列出预计写入的文件或目录
+7. **Depends on**: 每个任务必须声明依赖任务 ID，或明确写 `none`
+8. **Parallel Safety**: 标记 `[P]` 的任务必须说明为什么可并行；未说明则不得标 `[P]`
+
+**`[P]` 的语义很窄:**
+- 任务写入范围不重叠
+- 不依赖未完成任务
+- 不共享需要顺序更新的状态、生成物或配置
+- 不涉及迁移、删除、公共 API、安全认证、构建/CI 这类高风险面
+
+`[P]` 只是并行候选，不代表 `leaspec-execute` 一定会并行执行。最终是否并行由执行评估决定。
 
 **绝对禁止的占位符（会导致 Plan 失败）:**
 - "TBD"、"TODO"、"稍后实现"
@@ -115,6 +127,8 @@ Phase N: Polish      — 文档、性能、收尾
 - [ ] design.md 通过了所有 Constitution Check gates？
 - [ ] plan.md 中 Phase 划分合理且依赖明确？
 - [ ] tasks.md 中无占位符（所有任务有具体描述和文件路径）？
+- [ ] 每个 task 都有 Write Scope、Depends on 和 Parallel Safety？
+- [ ] `[P]` 任务的写入范围和依赖确实互不冲突？
 - [ ] 测试先行（TDD 顺序: 测试 → 实现）？
 - [ ] 所有 spec 需求都有对应的 task 覆盖？（覆盖度检查）
 
@@ -129,4 +143,4 @@ Phase N: Polish      — 文档、性能、收尾
 
 ## 过渡
 
-完成后提示用户运行 `/leaspec-implement` 开始实现。
+完成后提示用户运行 `/leaspec-execute` 开始实现。

@@ -51,6 +51,17 @@ T002 ──┘          T004 ──┘
 |-------|-------|--------|
 | Group A | T001, T002, T004 | Operate on different files, no shared state |
 
+## Execution Assessment Guidance
+
+| Area | Guidance |
+|------|----------|
+| Expected Risk | low / medium / high |
+| Recommended Mode | linear-local / subagent-sequential / worktree-parallel / blocked-needs-human |
+| Confirmation Needed | yes / no |
+| Key Risk Signals | Dirty git state, main/master branch, worktree creation, shared write scopes, baseline failures, public behavior changes |
+
+`[P]` marks a candidate only. `leaspec-execute` must validate dependencies and write scopes before parallel execution.
+
 ## Implementation Strategy
 
 <!-- MVP-first / Incremental delivery / Parallel team -->
