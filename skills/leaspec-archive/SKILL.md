@@ -68,15 +68,43 @@ mv "leaspec/changes/<NNN-name>" "leaspec/archive/<YYYY-MM-DD>-<name>"
 3. 归档路径使用 `archive/YYYY-MM-DD-<name>/`
 4. 如目标归档目录已存在，停止并请用户确认新的归档目录名
 
-### Step 4: 提交
+### Step 4: 按 config.yaml 提交
+
+提交前必须读取 `leaspec/config.yaml` 中的 git 配置。不得跳过该配置，不得用默认值替代缺失或不可读配置。
+
+必须遵守:
+
+1. 如果当前目录不是 git 仓库，跳过提交并在归档摘要中说明。
+2. 如果 `git.track_leaspec: true`:
+   - 可以使用 `git add leaspec/`
+   - 不得对 `leaspec/` 使用 `git add` 的强制参数
+   - 如果 git 提示 `leaspec/` 被 ignore 规则排除，必须停止并要求用户协调 `leaspec/config.yaml` 与 ignore 规则
+3. 如果 `git.track_leaspec: false`:
+   - 不得执行 `git add leaspec/`
+   - 不得对 `leaspec/` 使用 `git add` 的强制参数
+   - 归档摘要必须说明 `leaspec/` 归档产物按配置保持本地/未追踪
+4. 如果 `git.track_agent_dirs: true`:
+   - 仅可正常 staging agent 目录，例如 `git add .agents/ .claude/`
+   - 不得对 agent 目录使用 `git add` 的强制参数
+   - 如果 agent 目录被 ignore 规则排除，必须停止并要求用户协调配置
+5. 如果 `git.track_agent_dirs: false`:
+   - 不得 staging `.agents/`、`.claude/` 或等价 agent 目录
+6. `ignore_method` 仅描述忽略规则位置，不授权强制添加被忽略文件。
+
+禁止使用任何 `git add` 的强制参数（`-f` / `--force`）处理 `leaspec/`、`.agents/`、`.claude/` 或其他被 ignore 规则排除的路径。
+
+允许的提交示例（仅当 `track_leaspec: true` 且路径未被 ignore）:
 
 ```bash
 git add leaspec/
+git status --short
 git commit -m "feat(leaspec): archive change <NNN>-<name>
 
 - Merged spec changes for <domain>
 - Archived to leaspec/archive/<YYYY-MM-DD>-<name>"
 ```
+
+如果配置禁止 staging 或没有允许提交的变更，跳过 commit，不得通过 `-f` 制造提交。
 
 ### Step 5: 输出归档摘要
 
